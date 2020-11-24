@@ -1,0 +1,15 @@
+[package]
+name = "approx-string-match-rs"
+version = "0.1.0"
+authors = ["Robert Knight <robertknight@gmail.com>"]
+edition = "2018"
+
+[profile.release]
+lto = true
+opt-level = 's'
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wee_alloc = "*"

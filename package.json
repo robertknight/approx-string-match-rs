@@ -1,0 +1,13 @@
+{
+  "name": "approx-string-match-rs",
+  "version": "0.1.0",
+  "description": "Approximate string matching library",
+  "main": "index.js",
+  "repository": "https://github.com/robertknight/approx-string-match-rs.git",
+  "author": "Robert Knight <robertknight@gmail.com>",
+  "license": "MIT",
+  "files": [
+    "./index.js",
+    "dist/*"
+  ]
+}

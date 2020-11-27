@@ -36,7 +36,6 @@
 mod wasm;
 
 use std::collections::HashMap;
-use std::rc::Rc;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Match {
@@ -79,36 +78,35 @@ fn reverse(chars: &[u16]) -> Vec<u16> {
     chars.iter().rev().cloned().collect()
 }
 
-fn find_match_starts(text: &[u16], pattern: &[u16], matches: Vec<Match>) -> Vec<Match> {
+fn find_match_starts(text: &[u16], pattern: &[u16], matches: &mut Vec<Match>) {
     let pat_rev = reverse(pattern);
 
-    matches
-        .iter()
-        .map(|m| {
-            // Find start of each match by reversing the pattern and matching segment
-            // of text and searching for an approx match with the same number of
-            // errors.
-            let min_start = 0.max(m.end as i32 - pattern.len() as i32 - m.errors as i32) as usize;
-            let text_rev = reverse(&text[min_start..m.end]);
+    // TODO - Re-use the pattern generated for `find_match_ends`.
+    let pattern_bits = PatternBits::new(&pat_rev);
 
-            // If there are multiple possible start points, choose the one that
-            // maximizes the length of the match.
-            let match_ends = find_match_ends(&text_rev, &pat_rev, m.errors);
-            let mut start = m.end;
+    for m in matches.iter_mut() {
+        // Find start of each match by reversing the pattern and matching segment
+        // of text and searching for an approx match with the same number of
+        // errors.
+        let min_start = 0.max(m.end as i32 - pattern.len() as i32 - m.errors as i32) as usize;
 
-            for rm in match_ends {
-                if m.end - rm.end < start {
-                    start = m.end - rm.end;
-                }
+        // TODO - Only generate this once or, better yet, use an iterator that reverses
+        // over the text.
+        let text_rev = reverse(&text[min_start..m.end]);
+
+        // If there are multiple possible start points, choose the one that
+        // maximizes the length of the match.
+        let match_ends = find_match_ends(&text_rev, &pat_rev, m.errors, &pattern_bits);
+        let mut start = m.end;
+
+        for rm in match_ends {
+            if m.end - rm.end < start {
+                start = m.end - rm.end;
             }
+        }
 
-            Match {
-                start,
-                end: m.end,
-                errors: m.errors,
-            }
-        })
-        .collect()
+        m.start = start;
+    }
 }
 
 /// Block calculation step of the algorithm.
@@ -252,7 +250,12 @@ impl<'a> PatternBits {
     }
 }
 
-fn find_match_ends(text: &[u16], pattern: &[u16], max_errors: usize) -> Vec<Match> {
+fn find_match_ends(
+    text: &[u16],
+    pattern: &[u16],
+    max_errors: usize,
+    pattern_bits: &PatternBits,
+) -> Vec<Match> {
     if pattern.is_empty() {
         return Vec::new();
     }
@@ -265,55 +268,6 @@ fn find_match_ends(text: &[u16], pattern: &[u16], max_errors: usize) -> Vec<Matc
 
     // Number of blocks required by this pattern.
     let block_count = (pattern.len() + BLOCK_LEN - 1) / BLOCK_LEN;
-
-    // Dummy match bit vector for chars in the text which do not occur in the pattern.
-    let zero_bits = Rc::new(vec![0; block_count]);
-
-    // Map of non-ASCII UTF-16 character code to bit vector indicating positions in the
-    // pattern that equal that character.
-    let mut nonascii_match_bits: HashMap<u16, Rc<Vec<BlockWord>>> = HashMap::new();
-
-    // Map of ASCII character code to bit vector indicating positions in the
-    // pattern that equal that character.
-    let mut ascii_match_bits = vec![zero_bits.clone(); 256];
-
-    // For each unique character in the pattern generate a bit vector indicating
-    // the positions where it occurs in the pattern.
-    for ch in pattern.iter() {
-        // Check if we've already seen this char.
-        if let Some(entry) = ascii_match_bits.get(*ch as usize) {
-            if *entry != zero_bits {
-                continue;
-            }
-        } else if nonascii_match_bits.get(ch).is_some() {
-            continue;
-        }
-
-        let mut match_bits: Vec<BlockWord> = vec![0; block_count];
-
-        for (b, bits) in match_bits.iter_mut().enumerate() {
-            // Set all the bits where the pattern matches the current char (ch).
-            // For indexes beyond the end of the pattern, always set the bit as
-            // if the pattern contained a wildcard char in that position.
-            for r in 0..BLOCK_LEN {
-                let idx = b * BLOCK_LEN + r;
-                if idx >= pattern.len() {
-                    continue;
-                }
-
-                if pattern[idx] == *ch {
-                    *bits |= 1 << r;
-                }
-            }
-        }
-
-        let match_bits = Rc::new(match_bits);
-        if let Some(entry) = ascii_match_bits.get_mut(*ch as usize) {
-            *entry = match_bits.clone();
-        } else {
-            nonascii_match_bits.insert(*ch, match_bits.clone());
-        }
-    }
 
     // Index of last-active block level in the column.
     let mut y = 0.max((max_errors as f32 / (BLOCK_LEN as f32)).ceil() as i32 - 1) as usize;
@@ -342,9 +296,7 @@ fn find_match_ends(text: &[u16], pattern: &[u16], max_errors: usize) -> Vec<Matc
     // Process each char of the text, computing the error count for `w` chars
     // of the pattern at a time.
     for (j, char_code) in text.iter().enumerate() {
-        let match_bits = ascii_match_bits
-            .get(*char_code as usize)
-            .unwrap_or_else(|| nonascii_match_bits.get(&char_code).unwrap_or(&zero_bits));
+        let match_bits = pattern_bits.lookup(*char_code);
 
         // Calculate error count for blocks that we definitely have to process
         // for this column.
@@ -409,8 +361,10 @@ fn find_match_ends(text: &[u16], pattern: &[u16], max_errors: usize) -> Vec<Matc
 }
 
 fn search_impl(text: &[u16], pattern: &[u16], max_errors: u32) -> Vec<Match> {
-    let matches = find_match_ends(text, pattern, max_errors as usize);
-    find_match_starts(text, pattern, matches)
+    let mut pattern_bits = PatternBits::new(&pattern);
+    let mut matches = find_match_ends(text, pattern, max_errors as usize, &pattern_bits);
+    find_match_starts(text, pattern, &mut matches);
+    matches
 }
 
 #[cfg(test)]
@@ -515,7 +469,7 @@ mod tests {
         )
     }
 
-    // #[test]
+    #[test]
     fn it_finds_match_for_non_ascii_pattern() {
         let text = utf16_str("hello world 🙂");
         let pattern = utf16_str("world 🙂");
@@ -524,7 +478,7 @@ mod tests {
         assert_eq!(matches[0].start, text.len() - pattern.len());
     }
 
-    // #[test]
+    #[test]
     fn it_finds_match_for_long_pattern() {
         let text = utf16_str("Many years later, as he faced the firing squad, Colonel Aureliano Buendía was to remember that distant afternoon when his father took him to discover ice.");
         let pattern = text.clone();

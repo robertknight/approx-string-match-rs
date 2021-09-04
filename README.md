@@ -31,10 +31,10 @@ rustup target add wasm32-unknown-unknown
 ## Usage
 
 ```sh
-# Compile library. This generates `dist/search.wasm`.
-make
+# Compile library. This creates a debug build of `dist/search.wasm`.
+# Use `make build-release` to create a release build.
+make build
 
 # Run demo
 node demo/demo.js
 ```
-

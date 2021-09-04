@@ -35,7 +35,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 #[derive(Clone, Debug)]
-struct Match {
+pub struct Match {
     start: usize,
     end: usize,
     errors: usize,

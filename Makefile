@@ -1,14 +1,21 @@
 .PHONY: build
-build:
+build: dist
 	cargo build --target wasm32-unknown-unknown
+	cp target/wasm32-unknown-unknown/debug/approx_string_match_rs.wasm dist/search.wasm
 
 .PHONY: test
 test:
 	cargo test
 
 .PHONY: build-release
-build-release:
+build-release: dist
 	cargo build --target wasm32-unknown-unknown --release
-	wasm-snip --snip-rust-fmt-code --snip-rust-panicking-code target/wasm32-unknown-unknown/release/approx_string_match_rs.wasm -o /tmp/search.wasm
-	mkdir -p dist
-	wasm-opt -Oz --strip-debug /tmp/search.wasm -o dist/search.wasm
+	cp target/wasm32-unknown-unknown/release/approx_string_match_rs.wasm dist/search.wasm
+
+dist:
+	mkdir -p dist/
+
+.PHONY: clean
+clean:
+	cargo clean
+	rm -rf dist

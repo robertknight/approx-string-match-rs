@@ -1,7 +1,26 @@
-function copyStringToMemory(mem, buf, str) {
-  var u16 = new Uint16Array(mem.buffer, buf);
-  for (let i = 0; i < str.length; i++) {
-    u16[i] = str.charCodeAt(i);
+/**
+ * Wrapper around a string held in WebAssembly memory.
+ */
+class WasmString {
+  /**
+   * Construct a string in WebAssembly memory from a JavaScript string.
+   *
+   * @param {object} wasm - WebAssembly exports from `lib/wasm.rs`.
+   */
+  constructor(wasm, str) {
+    this.wasm = wasm;
+    this.buffer = wasm.char_buf_alloc(str.length);
+
+    const data = wasm.char_buf_data(this.buffer);
+    const u16 = new Uint16Array(wasm.memory.buffer, data);
+    for (let i = 0; i < str.length; i++) {
+      u16[i] = str.charCodeAt(i);
+    }
+  }
+
+  free() {
+    this.wasm.char_buf_free(this.buffer);
+    this.buffer = 0;
   }
 }
 
@@ -10,41 +29,28 @@ function copyStringToMemory(mem, buf, str) {
  * `maxErrors` errors.
  *
  * @param {Object} wasm - Exports object of the compiled WebAssembly implementation
- * @param {string} text - Text to search in
- * @param {string} pattern - String to search for in `text`
+ * @param {WasmString} text - Text to search in
+ * @param {WasmString} pattern - String to search for in `text`
  * @param {number} maxErrors - Maximum number of errors to allow
  * @return {Match[]} Array of matches
  */
 function search(wasm, text, pattern, maxErrors) {
-  // nb. Allocate a buffer that is one item longer than the text to avoid an
-  // issue with trying to allocate zero-length buffers.
-  const textPtr = wasm.alloc_char_buffer(text.length + 1);
-  const patPtr = wasm.alloc_char_buffer(pattern.length + 1);
+  const matchVec = wasm.match_vec_alloc();
 
-  copyStringToMemory(wasm.memory, textPtr, text);
-  copyStringToMemory(wasm.memory, patPtr, pattern);
+  wasm.search(matchVec, text.buffer, pattern.buffer, maxErrors);
 
-  const matchCount = wasm.search(
-    textPtr,
-    text.length,
-    patPtr,
-    pattern.length,
-    maxErrors
-  );
-
-  wasm.free_char_buffer(textPtr);
-  wasm.free_char_buffer(patPtr);
-
+  const matchCount = wasm.match_vec_len(matchVec);
   const matches = [];
   for (let m = 0; m < matchCount; m++) {
-    const start = wasm.match_start(m);
-    const end = wasm.match_end(m);
-    const errors = wasm.match_errors(m);
+    const match = wasm.match_vec_get(matchVec, m);
+    const start = wasm.match_start(match);
+    const end = wasm.match_end(match);
+    const errors = wasm.match_errors(match);
     matches.push({ start, end, errors });
   }
-  wasm.clear_matches();
 
+  wasm.match_vec_free(matchVec);
   return matches;
 }
 
-module.exports = { search };
+module.exports = { WasmString, search };

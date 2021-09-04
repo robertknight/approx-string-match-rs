@@ -1,7 +1,5 @@
 // This module defines the WASM API for the library.
 
-use std::alloc::{alloc, dealloc, Layout};
-
 use crate::search_impl;
 use crate::Match;
 
@@ -10,61 +8,67 @@ extern crate wee_alloc;
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
-static mut LAST_MATCHES: Vec<Match> = Vec::new();
-
 #[no_mangle]
-pub extern "C" fn match_start(index: usize) -> usize {
-    unsafe { LAST_MATCHES[index].start }
+pub extern "C" fn match_vec_alloc() -> *mut Vec<Match> {
+    let box_ = Box::new(Vec::new());
+    Box::into_raw(box_)
 }
 
 #[no_mangle]
-pub extern "C" fn match_end(index: usize) -> usize {
-    unsafe { LAST_MATCHES[index].end }
+pub extern "C" fn match_vec_len(mv: &Vec<Match>) -> usize {
+    mv.len()
 }
 
 #[no_mangle]
-pub extern "C" fn match_errors(index: usize) -> usize {
-    unsafe { LAST_MATCHES[index].errors }
+pub extern "C" fn match_vec_free(mv: *mut Vec<Match>) {
+    unsafe { Box::from_raw(mv) };
 }
 
 #[no_mangle]
-pub extern "C" fn clear_matches() {
-    unsafe {
-        LAST_MATCHES.clear();
-    }
+pub extern "C" fn match_vec_get(mv: &Vec<Match>, index: usize) -> &Match {
+    &mv[index]
 }
 
 #[no_mangle]
-pub extern "C" fn alloc_char_buffer(len: usize) -> *mut u16 {
-    unsafe {
-        let layout = Layout::from_size_align(len * 2, 4).unwrap();
-        alloc(layout) as *mut u16
-    }
+pub extern "C" fn match_start(m: &Match) -> usize {
+    m.start
 }
 
 #[no_mangle]
-pub extern "C" fn free_char_buffer(ptr: *mut u16) {
-    unsafe {
-        dealloc(ptr as *mut u8, Layout::new::<u16>());
-    }
+pub extern "C" fn match_end(m: &Match) -> usize {
+    m.end
+}
+
+#[no_mangle]
+pub extern "C" fn match_errors(m: &Match) -> usize {
+    m.errors
+}
+
+#[no_mangle]
+pub extern "C" fn char_buf_alloc(len: usize) -> *mut Vec<u16> {
+    let box_ = Box::new(vec![0; len]);
+    Box::into_raw(box_)
+}
+
+#[no_mangle]
+pub extern "C" fn char_buf_data(buf: &mut Vec<u16>) -> *mut u16 {
+    buf.as_mut_ptr()
+}
+
+#[no_mangle]
+pub extern "C" fn char_buf_free(buf: *mut Vec<u16>) {
+    unsafe { Box::from_raw(buf) };
 }
 
 #[no_mangle]
 pub extern "C" fn search(
-    text_buf: *mut u16,
-    text_len: usize,
-    pat_buf: *mut u16,
-    pat_len: usize,
+    match_vec: &mut Vec<Match>,
+    text: &Vec<u16>,
+    pat: &Vec<u16>,
     max_errors: u32,
 ) -> usize {
-    let text = unsafe { std::slice::from_raw_parts(text_buf, text_len) };
-    let pat = unsafe { std::slice::from_raw_parts(pat_buf, pat_len) };
-
-    let search_matches = search_impl(text, pat, max_errors);
-
-    unsafe {
-        LAST_MATCHES.clear();
-        LAST_MATCHES.extend_from_slice(&search_matches);
-        LAST_MATCHES.len()
-    }
+    let search_matches = search_impl(&text, &pat, max_errors);
+    match_vec.clear();
+    match_vec.extend_from_slice(&search_matches);
+    match_vec.len()
 }

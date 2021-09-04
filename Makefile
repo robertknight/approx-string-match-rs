@@ -2,6 +2,10 @@
 build:
 	cargo build --target wasm32-unknown-unknown
 
+.PHONY: test
+test:
+	cargo test
+
 .PHONY: build-release
 build-release:
 	cargo build --target wasm32-unknown-unknown --release
